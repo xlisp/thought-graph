@@ -69,6 +69,10 @@ Resolved at runtime via `app.path().app_data_dir()`:
 
 The `bundle.identifier` in `tauri.conf.json` (`com.chanshunli.thoughtgraph`) determines this path — changing it strands existing user data.
 
+### `window.__TAURI__` is opt-in in Tauri 2
+
+Tauri 2 **no longer auto-injects** `window.__TAURI__` like v1 did — `app.withGlobalTauri: true` must be set in `tauri.conf.json` or the frontend's `window.__TAURI__.core.invoke` call will throw, every event handler will fail to bind, and the UI will appear "frozen" (buttons do nothing). This is the single most common Tauri 2 trap when porting v1-style no-bundler frontends. `main.js` also includes a defensive check that replaces the body with a red error block if the bridge is missing — keep it; it has already saved one debug round.
+
 ### Tauri 2 capability gotcha
 
 `src-tauri/capabilities/default.json` is the v2 equivalent of v1's `tauri.allowlist`. Anything the webview tries to invoke that isn't permitted there will fail silently at the IPC bridge. Plugin permissions are namespaced (`opener:default`, `dialog:default`, etc.). Custom `#[tauri::command]` functions registered in `invoke_handler!` work without an explicit entry because `core:default` covers them.

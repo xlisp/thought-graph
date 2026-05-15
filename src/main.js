@@ -1,4 +1,19 @@
+// Tauri 2 global API (requires `app.withGlobalTauri: true` in tauri.conf.json).
+// If the bridge is missing, every UI button silently fails — fail loudly instead.
+if (!window.__TAURI__ || !window.__TAURI__.core || !window.__TAURI__.core.invoke) {
+  document.body.innerHTML =
+    '<pre style="padding:20px;color:#b32424;background:#fff;font-family:monospace">' +
+    'Tauri bridge not available.\n\n' +
+    'window.__TAURI__ = ' + JSON.stringify(window.__TAURI__) + '\n\n' +
+    'Make sure tauri.conf.json has `"app": { "withGlobalTauri": true }`, then rebuild.' +
+    '</pre>';
+  throw new Error("Tauri bridge missing");
+}
 const invoke = window.__TAURI__.core.invoke;
+
+// Surface any uncaught promise/JS error visibly — silent failures are the worst UX.
+window.addEventListener("error", (e) => console.error("[ui]", e.error || e.message));
+window.addEventListener("unhandledrejection", (e) => console.error("[ui] promise", e.reason));
 
 const state = {
   graphs: [],
