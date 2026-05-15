@@ -1,6 +1,6 @@
 mod commands;
-mod db;
-mod graph;
+pub mod db;
+pub mod graph;
 
 use db::DbState;
 use std::sync::Mutex;

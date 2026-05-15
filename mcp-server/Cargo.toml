@@ -1,0 +1,18 @@
+[package]
+name = "thoughtgraph-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "MCP server exposing ThoughtGraph as a long-term memory store for Claude Desktop"
+
+[[bin]]
+name = "thoughtgraph-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+graphviz-comment-reply = { path = "../src-tauri" }
