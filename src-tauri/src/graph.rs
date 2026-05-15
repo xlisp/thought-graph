@@ -145,14 +145,23 @@ fn which_dot() -> Result<String> {
     ))
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PathStep {
+    pub kind: String,      // "reply" | "ref"
+    pub reversed: bool,    // true => we walked against the arrow
+    pub label: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PathHit {
     pub nodes: Vec<Node>,
-    pub edge_kinds: Vec<String>,
+    pub steps: Vec<PathStep>, // len = nodes.len() - 1
 }
 
-// BFS shortest path from `from_app_id` to `to_app_id`, treating all edges as
-// directed. Returns up to `max_paths` shortest paths (same length tier).
+// Shortest-path search between two app_ids treating the graph as **undirected**
+// for traversal, but reporting per-step direction so the UI can render arrows
+// the same way GraphViz does. Without this, a leaf reply can never "find" its
+// ancestor (reply edges only point parent → child), which surprises users.
 pub fn find_paths(
     conn: &Connection,
     graph_id: i64,
@@ -168,22 +177,27 @@ pub fn find_paths(
     let nodes = list_nodes(conn, graph_id)?;
     let edges = list_edges(conn, graph_id)?;
     let node_map: HashMap<i64, Node> = nodes.into_iter().map(|n| (n.id, n)).collect();
-    let mut adj: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
+
+    // (neighbour, kind, reversed, label)
+    let mut adj: HashMap<i64, Vec<(i64, String, bool, String)>> = HashMap::new();
     for e in &edges {
-        adj.entry(e.from_node_id)
-            .or_default()
-            .push((e.to_node_id, e.kind.clone()));
+        adj.entry(e.from_node_id).or_default().push((
+            e.to_node_id, e.kind.clone(), false, e.label.clone(),
+        ));
+        adj.entry(e.to_node_id).or_default().push((
+            e.from_node_id, e.kind.clone(), true, e.label.clone(),
+        ));
     }
 
-    // BFS layered, enumerate shortest paths.
-    let mut q: VecDeque<Vec<(i64, String)>> = VecDeque::new();
-    q.push_back(vec![(start.id, "start".into())]);
-    let mut hits: Vec<Vec<(i64, String)>> = Vec::new();
+    type Step = (i64, Option<(String, bool, String)>);
+    let mut q: VecDeque<Vec<Step>> = VecDeque::new();
+    q.push_back(vec![(start.id, None)]);
+    let mut hits: Vec<Vec<Step>> = Vec::new();
     let mut shortest_len: Option<usize> = None;
     let max_depth = 64usize;
 
     while let Some(path) = q.pop_front() {
-        let (cur, _) = path.last().cloned().unwrap();
+        let cur = path.last().unwrap().0;
         if cur == end.id {
             let l = path.len();
             match shortest_len {
@@ -201,13 +215,12 @@ pub fn find_paths(
             continue;
         }
         if let Some(neis) = adj.get(&cur) {
-            for (nb, kind) in neis {
-                // avoid revisiting within same path (prevents infinite cycle expansion)
+            for (nb, kind, reversed, label) in neis {
                 if path.iter().any(|(nid, _)| nid == nb) {
-                    continue;
+                    continue; // no revisits within the same path
                 }
                 let mut np = path.clone();
-                np.push((*nb, kind.clone()));
+                np.push((*nb, Some((kind.clone(), *reversed, label.clone()))));
                 q.push_back(np);
             }
         }
@@ -217,19 +230,16 @@ pub fn find_paths(
         .into_iter()
         .map(|p| {
             let mut ns = Vec::with_capacity(p.len());
-            let mut ks = Vec::with_capacity(p.len().saturating_sub(1));
-            for (i, (nid, kind)) in p.iter().enumerate() {
-                if let Some(n) = node_map.get(nid) {
+            let mut steps = Vec::with_capacity(p.len().saturating_sub(1));
+            for (nid, edge) in p.into_iter() {
+                if let Some(n) = node_map.get(&nid) {
                     ns.push(n.clone());
                 }
-                if i > 0 {
-                    ks.push(kind.clone());
+                if let Some((kind, reversed, label)) = edge {
+                    steps.push(PathStep { kind, reversed, label });
                 }
             }
-            PathHit {
-                nodes: ns,
-                edge_kinds: ks,
-            }
+            PathHit { nodes: ns, steps }
         })
         .collect();
     Ok(result)

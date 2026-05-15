@@ -26,6 +26,16 @@ const state = {
   selectedNodeId: null,
   searchHits: null,    // null = not searching, [] = no hits, [...] = hits
   searchQuery: "",
+  fromNodeId: null,
+  toNodeId: null,
+};
+
+// Persisted UI flags
+const LS = {
+  sidebar() { return localStorage.getItem("ui.sidebar") !== "0"; },
+  setSidebar(v) { localStorage.setItem("ui.sidebar", v ? "1" : "0"); },
+  pathpane() { return localStorage.getItem("ui.pathpane") !== "0"; },
+  setPathpane(v) { localStorage.setItem("ui.pathpane", v ? "1" : "0"); },
 };
 
 // ============================================================================
@@ -220,8 +230,13 @@ async function selectGraph(id) {
   state.selectedNodeId = null;
   state.searchHits = null;
   state.searchQuery = "";
+  state.fromNodeId = null;
+  state.toNodeId = null;
   $("#content-search").value = "";
   $("#search-count").textContent = "";
+  if (typeof fromCombo !== "undefined") fromCombo.reset();
+  if (typeof toCombo !== "undefined") toCombo.reset();
+  $("#path-results").innerHTML = "";
   renderGraphList();
   if (!state.currentGraph) return;
   $("#graph-title").textContent = state.currentGraph.name;
@@ -561,72 +576,177 @@ async function refreshDotPreview(force = false) {
 }
 
 // ============================================================================
-// path search — accepts keyword OR exact app_id
+// pane toggles
 // ============================================================================
 
-async function resolveToAppId(input) {
-  // exact app_id match wins
-  const exact = findNodeByAppId(input);
-  if (exact) return { node: exact, viaSearch: false };
-  // otherwise FTS5 best match
-  const hits = await invoke("search_nodes", {
-    graphId: state.currentGraph.id,
-    query: input,
-    limit: 1,
-  });
-  if (hits.length) return { node: hits[0].node, viaSearch: true };
-  return null;
+function applyPaneState() {
+  $("#app").classList.toggle("no-sidebar", !LS.sidebar());
+  document.querySelector(".panes").classList.toggle("no-search", !LS.pathpane());
+  $("#toggle-sidebar").textContent = LS.sidebar() ? "◀" : "▶";
+  $("#toggle-pathpane").textContent = LS.pathpane() ? "▶" : "◀";
 }
+$("#toggle-sidebar").onclick = () => { LS.setSidebar(!LS.sidebar()); applyPaneState(); };
+$("#toggle-pathpane").onclick = () => { LS.setPathpane(!LS.pathpane()); applyPaneState(); };
+
+// ============================================================================
+// autocomplete combobox for path search
+// ============================================================================
+//
+// Each combobox holds one selected node id internally. Typing filters the
+// dropdown; clicking an option commits a pick and locks the input. Editing the
+// text after picking clears the pick (visual cue: blue background).
+
+function makeCombo({ inputEl, listEl, onPick }) {
+  let active = -1;
+  let lastResults = [];
+
+  function close() { listEl.classList.add("hidden"); active = -1; }
+  function clearPick() {
+    inputEl.classList.remove("has-pick");
+    onPick(null);
+  }
+
+  async function open(rawQuery) {
+    if (!state.currentGraph) { close(); return; }
+    const q = rawQuery.trim();
+    let hits;
+    if (!q) {
+      // empty → show first N nodes from this graph
+      hits = state.nodes.slice(0, 30).map((n) => ({ node: n, snippet: n.content }));
+    } else {
+      try {
+        hits = await invoke("search_nodes", {
+          graphId: state.currentGraph.id,
+          query: q,
+          limit: 30,
+        });
+      } catch {
+        // fallback: substring match on app_id and content
+        const ql = q.toLowerCase();
+        hits = state.nodes
+          .filter((n) => n.app_id.toLowerCase().includes(ql) || n.content.toLowerCase().includes(ql))
+          .slice(0, 30)
+          .map((n) => ({ node: n, snippet: n.content }));
+      }
+      // also include exact app_id match if not already there
+      const exact = findNodeByAppId(q);
+      if (exact && !hits.find((h) => h.node.id === exact.id)) {
+        hits.unshift({ node: exact, snippet: exact.content });
+      }
+    }
+    lastResults = hits;
+    if (!hits.length) {
+      listEl.innerHTML = `<div class="empty">No matches in this graph.</div>`;
+    } else {
+      listEl.innerHTML = hits.map((h, i) => `
+        <div class="opt${i === 0 ? " active" : ""}" data-idx="${i}">
+          <span class="app-id">${escapeHtml(h.node.app_id)}</span>
+          <span class="preview">${escapeHtml((h.snippet || h.node.content).replace(/\s+/g, " ")).slice(0, 200)}</span>
+        </div>
+      `).join("");
+      active = 0;
+      for (const opt of listEl.querySelectorAll(".opt")) {
+        opt.onmousedown = (e) => {
+          e.preventDefault();
+          pick(Number(opt.dataset.idx));
+        };
+      }
+    }
+    listEl.classList.remove("hidden");
+  }
+
+  function pick(idx) {
+    const h = lastResults[idx];
+    if (!h) return;
+    inputEl.value = `${h.node.app_id} · ${h.node.content.replace(/\s+/g, " ").slice(0, 50)}`;
+    inputEl.classList.add("has-pick");
+    onPick(h.node);
+    close();
+  }
+
+  inputEl.addEventListener("focus", () => open(inputEl.value));
+  inputEl.addEventListener("input", () => {
+    if (inputEl.classList.contains("has-pick")) clearPick();
+    open(inputEl.value);
+  });
+  inputEl.addEventListener("blur", () => setTimeout(close, 120));
+  inputEl.addEventListener("keydown", (e) => {
+    if (listEl.classList.contains("hidden")) return;
+    const opts = listEl.querySelectorAll(".opt");
+    if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, opts.length - 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); }
+    else if (e.key === "Enter") { e.preventDefault(); pick(active); }
+    else if (e.key === "Escape") { close(); }
+    else return;
+    opts.forEach((o, i) => o.classList.toggle("active", i === active));
+    const a = opts[active];
+    if (a) a.scrollIntoView({ block: "nearest" });
+  });
+
+  return { reset() { inputEl.value = ""; inputEl.classList.remove("has-pick"); onPick(null); } };
+}
+
+const fromCombo = makeCombo({
+  inputEl: $("#from-input"),
+  listEl: $("#from-list"),
+  onPick: (node) => { state.fromNodeId = node ? node.id : null; },
+});
+const toCombo = makeCombo({
+  inputEl: $("#to-input"),
+  listEl: $("#to-list"),
+  onPick: (node) => { state.toNodeId = node ? node.id : null; },
+});
+
+// ============================================================================
+// path search
+// ============================================================================
 
 $("#search-paths").onclick = async () => {
   if (!state.currentGraph) return;
-  const fromIn = $("#from-id").value.trim();
-  const toIn = $("#to-id").value.trim();
-  if (!fromIn || !toIn) { alert("Enter both From and To"); return; }
+  if (!state.fromNodeId || !state.toNodeId) {
+    alert("Pick both From and To nodes from the dropdowns.");
+    return;
+  }
+  const from = state.nodes.find((n) => n.id === state.fromNodeId);
+  const to = state.nodes.find((n) => n.id === state.toNodeId);
+  if (!from || !to) { alert("Selection no longer valid — reload the graph."); return; }
   try {
-    const [fromR, toR] = await Promise.all([resolveToAppId(fromIn), resolveToAppId(toIn)]);
-    if (!fromR) { alert(`No match for From="${fromIn}"`); return; }
-    if (!toR)   { alert(`No match for To="${toIn}"`); return; }
-
     const hits = await invoke("find_paths", {
       graphId: state.currentGraph.id,
-      fromAppId: fromR.node.app_id,
-      toAppId: toR.node.app_id,
+      fromAppId: from.app_id,
+      toAppId: to.app_id,
       maxPaths: 10,
     });
-    renderPathResults({
-      from: fromR, fromInput: fromIn,
-      to: toR, toInput: toIn,
-      hits,
-    });
+    renderPathResults({ from, to, hits });
   } catch (e) { alert(e); }
 };
 
-function renderPathResults({ from, fromInput, to, toInput, hits }) {
+function renderPathResults({ from, to, hits }) {
   const box = $("#path-results");
-  const resolvedNote = (from.viaSearch || to.viaSearch)
-    ? `<div class="resolved-note">
-         Resolved
-         ${from.viaSearch ? `<b>${escapeHtml(fromInput)}</b> → <code>${escapeHtml(from.node.app_id)}</code>` : ""}
-         ${from.viaSearch && to.viaSearch ? " · " : ""}
-         ${to.viaSearch ? `<b>${escapeHtml(toInput)}</b> → <code>${escapeHtml(to.node.app_id)}</code>` : ""}
-       </div>`
-    : "";
-
+  const header = `<div class="resolved-note">
+       <code>${escapeHtml(from.app_id)}</code> ⇄ <code>${escapeHtml(to.app_id)}</code>
+     </div>`;
   if (!hits.length) {
-    box.innerHTML = resolvedNote + `<p class="muted" style="padding:8px">No path found.</p>`;
+    box.innerHTML = header + `<p class="muted" style="padding:8px">No path found.</p>`;
     return;
   }
-  box.innerHTML = resolvedNote + hits.map((h, i) => {
-    const steps = h.nodes.map((n, idx) => {
-      const kind = idx > 0 ? h.edge_kinds[idx - 1] : null;
-      const arrow = kind ? `<span class="arrow ${kind === "ref" ? "ref" : ""}">${kind === "ref" ? " ⟲ " : " ↳ "}</span>` : "";
-      return `${arrow}<span class="step" data-node="${n.id}"><span class="app-id">${escapeHtml(n.app_id)}</span></span>`;
-    }).join("");
-    return `<div class="path-item"><b>Path ${i + 1}</b> · ${h.nodes.length - 1} step(s)<br/>${steps}</div>`;
+  box.innerHTML = header + hits.map((h, i) => {
+    const parts = [];
+    for (let j = 0; j < h.nodes.length; j++) {
+      if (j > 0) {
+        const step = h.steps[j - 1];
+        let glyph, cls;
+        if (step.kind === "ref") { glyph = step.reversed ? "↺" : "⟲"; cls = "ref"; }
+        else                      { glyph = step.reversed ? "↑" : "↳"; cls = "reply"; }
+        const tip = step.reversed ? "walked against the arrow" : "follows the arrow";
+        parts.push(`<span class="arrow ${cls}" title="${tip}${step.label ? " · " + escapeHtml(step.label) : ""}"> ${glyph} </span>`);
+      }
+      const n = h.nodes[j];
+      parts.push(`<span class="step" data-node="${n.id}" title="${escapeHtml(n.content.slice(0, 200))}"><span class="app-id">${escapeHtml(n.app_id)}</span></span>`);
+    }
+    return `<div class="path-item"><b>Path ${i + 1}</b> · ${h.nodes.length - 1} step(s)<br/>${parts.join("")}</div>`;
   }).join("");
 
-  // clickable steps → jump to that node
   for (const s of box.querySelectorAll(".step[data-node]")) {
     s.style.cursor = "pointer";
     s.onclick = () => scrollToNode(Number(s.dataset.node));
@@ -637,4 +757,5 @@ function renderPathResults({ from, fromInput, to, toInput, hits }) {
 // boot
 // ============================================================================
 
+applyPaneState();
 loadGraphs();

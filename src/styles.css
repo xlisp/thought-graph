@@ -47,7 +47,19 @@ h4 { font-size: 12px; text-transform: uppercase; color: #6b7080; letter-spacing:
 .muted.small { font-size: 11px; padding: 0 12px 8px; margin: 0; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
-#app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+#app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; transition: grid-template-columns 0.18s; }
+#app.no-sidebar { grid-template-columns: 0 1fr; }
+#app.no-sidebar .sidebar { display: none; }
+
+.toggle-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  background: #f3f4f8;
+  color: #4b5063;
+  border-color: #d4d7e0;
+}
+.toggle-btn:hover:not(:disabled) { background: #e3e5ec; }
+
 .sidebar {
   background: #20242f;
   color: #e6e8ee;
@@ -117,7 +129,13 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   background: #e3e5ec;
   flex: 1;
   min-height: 0;
+  transition: grid-template-columns 0.18s;
 }
+.panes.no-search {
+  grid-template-columns: 1fr 0;
+}
+.panes.no-search .search-pane { display: none; }
+
 .pane {
   background: #fff;
   display: flex;
@@ -234,6 +252,51 @@ mark.hl { background: #ffe88c; padding: 0 1px; border-radius: 2px; }
 .search-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; padding: 10px 12px 6px; align-items: end; }
 .search-form label { display: block; font-size: 12px; color: #6b7080; }
 .search-form label input { margin-top: 4px; }
+
+/* combobox (autocomplete dropdown) */
+.combo { position: relative; }
+.combo > label { font-size: 12px; color: #6b7080; }
+.combo > input { margin-top: 4px; width: 100%; }
+.combo > input.has-pick { background: #eef4ff; border-color: #3a73e8; }
+.combo-list {
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #d4d7e0;
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+  z-index: 30;
+  margin-top: 2px;
+}
+.combo-list.hidden { display: none; }
+.combo-list .opt {
+  padding: 6px 10px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f1f5;
+}
+.combo-list .opt:last-child { border-bottom: none; }
+.combo-list .opt:hover, .combo-list .opt.active { background: #f3f4f8; }
+.combo-list .opt .app-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #eef0f6;
+  color: #4b5063;
+  flex-shrink: 0;
+}
+.combo-list .opt .preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-list .empty { padding: 8px 10px; color: #8a8f9c; font-size: 12px; }
 
 .path-results { overflow-y: auto; padding: 0 12px; min-height: 0; max-height: 40vh; }
 .path-item {

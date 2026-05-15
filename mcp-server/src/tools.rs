@@ -499,8 +499,13 @@ fn do_find_paths(ctx: &Ctx, args: &Value) -> Result<String> {
             if j == 0 {
                 out.push_str(&format!("  `{}`", n.app_id));
             } else {
-                let kind = &p.edge_kinds[j - 1];
-                let arrow = if kind == "ref" { "⟲" } else { "↳" };
+                let step = &p.steps[j - 1];
+                let arrow = match (step.kind.as_str(), step.reversed) {
+                    ("ref", false) => "⟲",
+                    ("ref", true) => "↺",  // walked against a ref edge
+                    (_, false) => "↳",
+                    (_, true) => "↑",      // walked against a reply edge
+                };
                 out.push_str(&format!(" {} `{}`", arrow, n.app_id));
             }
         }
