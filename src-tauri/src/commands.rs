@@ -248,6 +248,64 @@ pub fn render_paths_and_open(
 }
 
 #[tauri::command]
+pub fn find_paths_by_keyword(
+    state: State<'_, DbState>,
+    graph_id: i64,
+    from_keyword: String,
+    to_keyword: String,
+    max_paths: Option<usize>,
+) -> Result<Vec<PathHit>, String> {
+    let conn = state.conn.lock().map_err(err)?;
+    graph::find_paths_by_keyword(
+        &conn,
+        graph_id,
+        &from_keyword,
+        &to_keyword,
+        max_paths.unwrap_or(50),
+    )
+    .map_err(err)
+}
+
+#[tauri::command]
+pub fn render_paths_by_keyword_and_open(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    graph_id: i64,
+    from_keyword: String,
+    to_keyword: String,
+    max_paths: Option<usize>,
+    format: Option<String>,
+) -> Result<RenderResult, String> {
+    let fmt = format.unwrap_or_else(|| "pdf".to_string());
+    let conn = state.conn.lock().map_err(err)?;
+    let g_name = conn
+        .query_row(
+            "SELECT name FROM graphs WHERE id = ?1",
+            [graph_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(err)?;
+    let paths = graph::find_paths_by_keyword(
+        &conn,
+        graph_id,
+        &from_keyword,
+        &to_keyword,
+        max_paths.unwrap_or(50),
+    )
+    .map_err(err)?;
+    if paths.is_empty() {
+        return Err("No paths found for those keywords.".into());
+    }
+    let dir = export_dir(&app)?;
+    let res = graph::render_paths_and_save(&paths, &g_name, &dir, &fmt).map_err(err)?;
+    std::process::Command::new("open")
+        .arg(&res.image_path)
+        .status()
+        .map_err(err)?;
+    Ok(res)
+}
+
+#[tauri::command]
 pub fn search_nodes(
     state: State<'_, DbState>,
     graph_id: Option<i64>,

@@ -31,7 +31,6 @@
             <button id="export-gv">Export .gv</button>
             <button id="render-pdf">Render → PDF</button>
             <button id="open-graphviz">Open in Graphviz.app</button>
-            <button id="show-dot">Show DOT</button>
             <button id="delete-graph" class="danger">Delete</button>
             <button id="toggle-pathpane" class="toggle-btn" title="Hide / show path search">▶</button>
           </div>
@@ -51,30 +50,26 @@
             <ul id="nodes-tree" class="tree"></ul>
           </div>
 
-          <!-- ===== PATH SEARCH + DOT PREVIEW ===== -->
+          <!-- ===== PATH SEARCH (keyword DFS) ===== -->
           <div class="pane search-pane" id="search-pane">
             <div class="pane-head"><h3>Thinking path search</h3></div>
             <div class="search-form">
-              <div class="combo">
-                <label>From</label>
-                <input id="from-input" placeholder="Type to filter…" autocomplete="off" />
-                <div id="from-list" class="combo-list hidden"></div>
-              </div>
-              <div class="combo">
-                <label>To</label>
-                <input id="to-input" placeholder="Type to filter…" autocomplete="off" />
-                <div id="to-list" class="combo-list hidden"></div>
-              </div>
-              <button id="search-paths" class="primary">Find</button>
+              <label>
+                From keyword
+                <input id="from-input" placeholder="e.g. login, 安全…" autocomplete="off" />
+              </label>
+              <label>
+                To keyword
+                <input id="to-input" placeholder="e.g. token, 审计…" autocomplete="off" />
+              </label>
+              <button id="search-paths" class="primary">Find paths</button>
             </div>
             <p class="muted small">
-              Search treats edges as <b>undirected</b>; arrows in results show the actual
-              direction in GraphViz (<code>↳</code>/<code>⟲</code> with the flow,
-              <code>↑</code>/<code>↺</code> against it).
+              DFS enumerates every <b>directed</b> path from any node matching
+              <b>From</b> to any node matching <b>To</b>. Match is case-insensitive
+              substring on content or <code>app_id</code>.
             </p>
             <div id="path-results" class="path-results"></div>
-            <h4>DOT preview</h4>
-            <pre id="dot-preview" class="dot"></pre>
           </div>
         </section>
       </main>

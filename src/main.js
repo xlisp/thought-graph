@@ -26,8 +26,6 @@ const state = {
   selectedNodeId: null,
   searchHits: null,    // null = not searching, [] = no hits, [...] = hits
   searchQuery: "",
-  fromNodeId: null,
-  toNodeId: null,
 };
 
 // Persisted UI flags
@@ -230,12 +228,10 @@ async function selectGraph(id) {
   state.selectedNodeId = null;
   state.searchHits = null;
   state.searchQuery = "";
-  state.fromNodeId = null;
-  state.toNodeId = null;
   $("#content-search").value = "";
   $("#search-count").textContent = "";
-  if (typeof fromCombo !== "undefined") fromCombo.reset();
-  if (typeof toCombo !== "undefined") toCombo.reset();
+  $("#from-input").value = "";
+  $("#to-input").value = "";
   $("#path-results").innerHTML = "";
   renderGraphList();
   if (!state.currentGraph) return;
@@ -253,7 +249,6 @@ async function reloadNodesAndEdges() {
   state.nodes = nodes;
   state.edges = edges;
   renderTree();
-  refreshDotPreview();
 }
 
 // ============================================================================
@@ -359,10 +354,6 @@ function renderTree() {
   }
 
   for (const r of roots) ul.appendChild(nodeLi(r));
-}
-
-function findNodeByAppId(appId) {
-  return state.nodes.find((n) => n.app_id === appId) || null;
 }
 
 function scrollToNode(nodeId) {
@@ -489,7 +480,7 @@ $("#delete-graph").onclick = async () => {
   $("#graph-title").textContent = "Pick or create a graph";
   $("#graph-desc").textContent = "";
   $("#nodes-tree").innerHTML = "";
-  $("#dot-preview").textContent = "";
+  $("#path-results").innerHTML = "";
   await loadGraphs();
 };
 
@@ -563,17 +554,6 @@ $("#open-graphviz").onclick = async () => {
   try { await invoke("open_in_graphviz_app", { graphId: state.currentGraph.id }); }
   catch (e) { alert(e); }
 };
-$("#show-dot").onclick = () => refreshDotPreview(true);
-
-async function refreshDotPreview(force = false) {
-  if (!state.currentGraph) { $("#dot-preview").textContent = ""; return; }
-  try {
-    const dot = await invoke("preview_dot", { graphId: state.currentGraph.id });
-    $("#dot-preview").textContent = dot;
-  } catch (e) {
-    if (force) alert(e);
-  }
-}
 
 // ============================================================================
 // pane toggles
@@ -589,165 +569,38 @@ $("#toggle-sidebar").onclick = () => { LS.setSidebar(!LS.sidebar()); applyPaneSt
 $("#toggle-pathpane").onclick = () => { LS.setPathpane(!LS.pathpane()); applyPaneState(); };
 
 // ============================================================================
-// autocomplete combobox for path search
+// path search (keyword DFS)
 // ============================================================================
 //
-// Each combobox holds one selected node id internally. Typing filters the
-// dropdown; clicking an option commits a pick and locks the input. Editing the
-// text after picking clears the pick (visual cue: blue background).
+// Mirrors parse_gv_and_search_dfs_all_paths_save_gv.go: take two keywords,
+// enumerate every directed simple path from any node matching the From keyword
+// to any node matching the To keyword.
 
-function makeCombo({ inputEl, listEl, onPick }) {
-  let active = -1;
-  let lastResults = [];
-
-  function close() { listEl.classList.add("hidden"); active = -1; }
-  function clearPick() {
-    inputEl.classList.remove("has-pick");
-    onPick(null);
-  }
-
-  async function open(rawQuery) {
-    if (!state.currentGraph) { close(); return; }
-    const q = rawQuery.trim();
-    let hits;
-    if (!q) {
-      // empty → show first N nodes from this graph
-      hits = state.nodes.slice(0, 30).map((n) => ({ node: n, snippet: n.content }));
-    } else {
-      try {
-        hits = await invoke("search_nodes", {
-          graphId: state.currentGraph.id,
-          query: q,
-          limit: 30,
-        });
-      } catch {
-        // fallback: substring match on app_id and content
-        const ql = q.toLowerCase();
-        hits = state.nodes
-          .filter((n) => n.app_id.toLowerCase().includes(ql) || n.content.toLowerCase().includes(ql))
-          .slice(0, 30)
-          .map((n) => ({ node: n, snippet: n.content }));
-      }
-      // also include exact app_id match if not already there
-      const exact = findNodeByAppId(q);
-      if (exact && !hits.find((h) => h.node.id === exact.id)) {
-        hits.unshift({ node: exact, snippet: exact.content });
-      }
-    }
-    lastResults = hits;
-    if (!hits.length) {
-      listEl.innerHTML = `<div class="empty">No matches in this graph.</div>`;
-    } else {
-      listEl.innerHTML = hits.map((h, i) => `
-        <div class="opt${i === 0 ? " active" : ""}" data-idx="${i}">
-          <span class="app-id">${escapeHtml(h.node.app_id)}</span>
-          <span class="preview">${escapeHtml((h.snippet || h.node.content).replace(/\s+/g, " ")).slice(0, 200)}</span>
-        </div>
-      `).join("");
-      active = 0;
-      for (const opt of listEl.querySelectorAll(".opt")) {
-        opt.onmousedown = (e) => {
-          e.preventDefault();
-          pick(Number(opt.dataset.idx));
-        };
-      }
-    }
-    listEl.classList.remove("hidden");
-  }
-
-  function pick(idx) {
-    const h = lastResults[idx];
-    if (!h) return;
-    inputEl.value = `${h.node.app_id} · ${h.node.content.replace(/\s+/g, " ").slice(0, 50)}`;
-    inputEl.classList.add("has-pick");
-    onPick(h.node);
-    close();
-  }
-
-  inputEl.addEventListener("focus", () => open(inputEl.value));
-  inputEl.addEventListener("input", () => {
-    if (inputEl.classList.contains("has-pick")) clearPick();
-    open(inputEl.value);
-  });
-  inputEl.addEventListener("blur", () => setTimeout(close, 120));
-  inputEl.addEventListener("keydown", (e) => {
-    if (listEl.classList.contains("hidden")) return;
-    const opts = listEl.querySelectorAll(".opt");
-    if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, opts.length - 1); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); }
-    else if (e.key === "Enter") { e.preventDefault(); pick(active); }
-    else if (e.key === "Escape") { close(); }
-    else return;
-    opts.forEach((o, i) => o.classList.toggle("active", i === active));
-    const a = opts[active];
-    if (a) a.scrollIntoView({ block: "nearest" });
-  });
-
-  return { reset() { inputEl.value = ""; inputEl.classList.remove("has-pick"); onPick(null); } };
-}
-
-const fromCombo = makeCombo({
-  inputEl: $("#from-input"),
-  listEl: $("#from-list"),
-  onPick: (node) => { state.fromNodeId = node ? node.id : null; },
-});
-const toCombo = makeCombo({
-  inputEl: $("#to-input"),
-  listEl: $("#to-list"),
-  onPick: (node) => { state.toNodeId = node ? node.id : null; },
-});
-
-// ============================================================================
-// path search
-// ============================================================================
-
-// Resolve a combobox to a node: prefer explicit dropdown pick, fall back to
-// (a) exact app_id from raw input, (b) FTS5 top hit. Lets a pasted app_id
-// "just work" without forcing the user to click into the dropdown.
-async function resolveCombo(nodeId, inputValue) {
-  if (nodeId) return state.nodes.find((n) => n.id === nodeId) || null;
-  const raw = (inputValue || "").trim();
-  if (!raw) return null;
-  // The combobox displays "<app_id> · <content>" after a pick. Extract first token.
-  const firstTok = raw.split(/[\s·]+/, 1)[0];
-  const exact = findNodeByAppId(firstTok) || findNodeByAppId(raw);
-  if (exact) return exact;
-  try {
-    const hits = await invoke("search_nodes", {
-      graphId: state.currentGraph.id,
-      query: raw,
-      limit: 1,
-    });
-    if (hits.length) return hits[0].node;
-  } catch {}
-  return null;
-}
+const MAX_PATHS = 50;
 
 $("#search-paths").onclick = async () => {
-  if (!state.currentGraph) return;
-  const from = await resolveCombo(state.fromNodeId, $("#from-input").value);
-  const to   = await resolveCombo(state.toNodeId,   $("#to-input").value);
-  if (!from) { alert(`From: couldn't find a node matching "${$("#from-input").value.trim()}"`); return; }
-  if (!to)   { alert(`To: couldn't find a node matching "${$("#to-input").value.trim()}"`); return; }
-  if (from.id === to.id) {
-    alert("From and To resolved to the same node — pick distinct nodes.");
-    return;
-  }
+  if (!state.currentGraph) { alert("Pick or create a graph first."); return; }
+  const fromKw = $("#from-input").value.trim();
+  const toKw = $("#to-input").value.trim();
+  if (!fromKw) { alert("Enter a From keyword."); return; }
+  if (!toKw)   { alert("Enter a To keyword."); return; }
   try {
-    const hits = await invoke("find_paths", {
+    const hits = await invoke("find_paths_by_keyword", {
       graphId: state.currentGraph.id,
-      fromAppId: from.app_id,
-      toAppId: to.app_id,
-      maxPaths: 10,
+      fromKeyword: fromKw,
+      toKeyword: toKw,
+      maxPaths: MAX_PATHS,
     });
-    renderPathResults({ from, to, hits });
-  } catch (e) { alert(e); }
+    renderPathResults({ fromKw, toKw, hits });
+  } catch (e) {
+    $("#path-results").innerHTML = `<p class="muted" style="padding:8px">${escapeHtml(String(e))}</p>`;
+  }
 };
 
-function renderPathResults({ from, to, hits }) {
+function renderPathResults({ fromKw, toKw, hits }) {
   const box = $("#path-results");
   const header = `<div class="resolved-note" style="display:flex; align-items:center; justify-content:space-between; gap:8px">
-       <span><code>${escapeHtml(from.app_id)}</code> ⇄ <code>${escapeHtml(to.app_id)}</code></span>
+       <span><code>${escapeHtml(fromKw)}</code> → <code>${escapeHtml(toKw)}</code> · ${hits.length} path${hits.length === 1 ? "" : "s"}</span>
        ${hits.length ? `<button id="open-paths-gv" class="primary" style="padding:4px 8px; font-size:11px">📈 Open Graphviz</button>` : ""}
      </div>`;
   if (!hits.length) {
@@ -759,14 +612,13 @@ function renderPathResults({ from, to, hits }) {
     for (let j = 0; j < h.nodes.length; j++) {
       if (j > 0) {
         const step = h.steps[j - 1];
-        let glyph, cls;
-        if (step.kind === "ref") { glyph = step.reversed ? "↺" : "⟲"; cls = "ref"; }
-        else                      { glyph = step.reversed ? "↑" : "↳"; cls = "reply"; }
-        const tip = step.reversed ? "walked against the arrow" : "follows the arrow";
-        parts.push(`<span class="arrow ${cls}" title="${tip}${step.label ? " · " + escapeHtml(step.label) : ""}"> ${glyph} </span>`);
+        const glyph = step.kind === "ref" ? "⟲" : "↳";
+        const cls = step.kind === "ref" ? "ref" : "reply";
+        parts.push(`<span class="arrow ${cls}" title="${step.kind}${step.label ? " · " + escapeHtml(step.label) : ""}"> ${glyph} </span>`);
       }
       const n = h.nodes[j];
-      parts.push(`<span class="step" data-node="${n.id}" title="${escapeHtml(n.content.slice(0, 200))}"><span class="app-id">${escapeHtml(n.app_id)}</span></span>`);
+      const preview = (n.content || "").replace(/\s+/g, " ").slice(0, 60);
+      parts.push(`<span class="step" data-node="${n.id}" title="${escapeHtml(n.content.slice(0, 200))}"><span class="app-id">${escapeHtml(n.app_id)}</span> <span class="step-preview">${escapeHtml(preview)}</span></span>`);
     }
     return `<div class="path-item"><b>Path ${i + 1}</b> · ${h.nodes.length - 1} step(s)<br/>${parts.join("")}</div>`;
   }).join("");
@@ -776,7 +628,6 @@ function renderPathResults({ from, to, hits }) {
     s.onclick = () => scrollToNode(Number(s.dataset.node));
   }
 
-  // Render the path subgraph (multi-color paths) via dot and open the PDF.
   const openBtn = box.querySelector("#open-paths-gv");
   if (openBtn) {
     openBtn.onclick = async () => {
@@ -784,17 +635,24 @@ function renderPathResults({ from, to, hits }) {
       const origText = openBtn.textContent;
       openBtn.textContent = "Rendering…";
       try {
-        await invoke("render_paths_and_open", {
+        await invoke("render_paths_by_keyword_and_open", {
           graphId: state.currentGraph.id,
-          fromAppId: from.app_id,
-          toAppId: to.app_id,
-          maxPaths: 10,
+          fromKeyword: fromKw,
+          toKeyword: toKw,
+          maxPaths: MAX_PATHS,
           format: "pdf",
         });
       } catch (e) { alert(e); }
       finally { openBtn.disabled = false; openBtn.textContent = origText; }
     };
   }
+}
+
+// Enter in either input triggers the search.
+for (const id of ["#from-input", "#to-input"]) {
+  $(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("#search-paths").click(); }
+  });
 }
 
 // ============================================================================

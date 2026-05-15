@@ -427,3 +427,126 @@ pub fn find_paths(
         .collect();
     Ok(result)
 }
+
+// Keyword-driven, directed DFS that enumerates every simple path from any node
+// whose content (or app_id) matches `from_keyword` to any node matching
+// `to_keyword`. Matching is case-insensitive substring. Edges are traversed in
+// their natural direction — same shape as the Go reference's `findAllPaths`.
+// `max_paths` caps the result set; `max_depth` caps recursion depth so that
+// densely-connected graphs do not blow up.
+pub fn find_paths_by_keyword(
+    conn: &Connection,
+    graph_id: i64,
+    from_keyword: &str,
+    to_keyword: &str,
+    max_paths: usize,
+) -> Result<Vec<PathHit>> {
+    let from_key = from_keyword.trim().to_lowercase();
+    let to_key = to_keyword.trim().to_lowercase();
+    if from_key.is_empty() {
+        return Err(anyhow!("from keyword cannot be empty"));
+    }
+    if to_key.is_empty() {
+        return Err(anyhow!("to keyword cannot be empty"));
+    }
+
+    let nodes = list_nodes(conn, graph_id)?;
+    let edges = list_edges(conn, graph_id)?;
+
+    let matches = |n: &Node, kw: &str| -> bool {
+        n.content.to_lowercase().contains(kw) || n.app_id.to_lowercase().contains(kw)
+    };
+    let from_nodes: Vec<Node> = nodes.iter().filter(|n| matches(n, &from_key)).cloned().collect();
+    let to_ids: HashSet<i64> = nodes.iter().filter(|n| matches(n, &to_key)).map(|n| n.id).collect();
+
+    if from_nodes.is_empty() {
+        return Err(anyhow!("no nodes match from keyword: {}", from_keyword));
+    }
+    if to_ids.is_empty() {
+        return Err(anyhow!("no nodes match to keyword: {}", to_keyword));
+    }
+
+    // Directed adjacency — matches the Go reference's `buildGraph`.
+    let mut adj: HashMap<i64, Vec<(i64, String, String)>> = HashMap::new();
+    for e in &edges {
+        adj.entry(e.from_node_id).or_default().push((
+            e.to_node_id,
+            e.kind.clone(),
+            e.label.clone(),
+        ));
+    }
+
+    let node_map: HashMap<i64, Node> = nodes.into_iter().map(|n| (n.id, n)).collect();
+    let max_depth: usize = 32;
+    let mut all_hits: Vec<PathHit> = Vec::new();
+
+    for from in &from_nodes {
+        if all_hits.len() >= max_paths { break; }
+        let mut visited: HashSet<i64> = HashSet::new();
+        let mut cur_nodes: Vec<i64> = vec![from.id];
+        let mut cur_steps: Vec<PathStep> = Vec::new();
+        dfs_keyword(
+            &adj,
+            from.id,
+            &to_ids,
+            &mut visited,
+            &mut cur_nodes,
+            &mut cur_steps,
+            &mut all_hits,
+            &node_map,
+            max_paths,
+            max_depth,
+        );
+    }
+    Ok(all_hits)
+}
+
+fn dfs_keyword(
+    adj: &HashMap<i64, Vec<(i64, String, String)>>,
+    current: i64,
+    to_ids: &HashSet<i64>,
+    visited: &mut HashSet<i64>,
+    cur_nodes: &mut Vec<i64>,
+    cur_steps: &mut Vec<PathStep>,
+    all_hits: &mut Vec<PathHit>,
+    node_map: &HashMap<i64, Node>,
+    max_paths: usize,
+    max_depth: usize,
+) {
+    if all_hits.len() >= max_paths { return; }
+
+    // Record the path once we land on any to-keyword match (and we're not the
+    // trivial 1-node path). Stop exploring past the endpoint to keep results
+    // bounded — same shape as the Go reference returning at `current == end`.
+    if cur_nodes.len() > 1 && to_ids.contains(&current) {
+        let path_nodes: Vec<Node> = cur_nodes
+            .iter()
+            .filter_map(|id| node_map.get(id).cloned())
+            .collect();
+        all_hits.push(PathHit {
+            nodes: path_nodes,
+            steps: cur_steps.clone(),
+        });
+        return;
+    }
+
+    if cur_nodes.len() >= max_depth { return; }
+
+    visited.insert(current);
+    if let Some(neighbors) = adj.get(&current) {
+        for (nb, kind, label) in neighbors {
+            if visited.contains(nb) { continue; }
+            cur_nodes.push(*nb);
+            cur_steps.push(PathStep {
+                kind: kind.clone(),
+                reversed: false,
+                label: label.clone(),
+            });
+            dfs_keyword(adj, *nb, to_ids, visited, cur_nodes, cur_steps, all_hits, node_map, max_paths, max_depth);
+            cur_nodes.pop();
+            cur_steps.pop();
+            if all_hits.len() >= max_paths { break; }
+        }
+    }
+    visited.remove(&current);
+}

@@ -313,6 +313,7 @@ mark.hl { background: #ffe88c; padding: 0 1px; border-radius: 2px; }
   background: #fafbff;
 }
 .path-item .step { display: inline-flex; align-items: center; gap: 4px; margin: 2px 0; }
+.path-item .step-preview { color: #6b7080; font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .path-item .arrow { color: #8a8f9c; padding: 0 2px; }
 .path-item .arrow.ref { color: #b35900; }
 .path-item .resolved-note { color: #b35900; font-size: 11px; margin-bottom: 6px; }
