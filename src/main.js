@@ -701,15 +701,38 @@ const toCombo = makeCombo({
 // path search
 // ============================================================================
 
+// Resolve a combobox to a node: prefer explicit dropdown pick, fall back to
+// (a) exact app_id from raw input, (b) FTS5 top hit. Lets a pasted app_id
+// "just work" without forcing the user to click into the dropdown.
+async function resolveCombo(nodeId, inputValue) {
+  if (nodeId) return state.nodes.find((n) => n.id === nodeId) || null;
+  const raw = (inputValue || "").trim();
+  if (!raw) return null;
+  // The combobox displays "<app_id> · <content>" after a pick. Extract first token.
+  const firstTok = raw.split(/[\s·]+/, 1)[0];
+  const exact = findNodeByAppId(firstTok) || findNodeByAppId(raw);
+  if (exact) return exact;
+  try {
+    const hits = await invoke("search_nodes", {
+      graphId: state.currentGraph.id,
+      query: raw,
+      limit: 1,
+    });
+    if (hits.length) return hits[0].node;
+  } catch {}
+  return null;
+}
+
 $("#search-paths").onclick = async () => {
   if (!state.currentGraph) return;
-  if (!state.fromNodeId || !state.toNodeId) {
-    alert("Pick both From and To nodes from the dropdowns.");
+  const from = await resolveCombo(state.fromNodeId, $("#from-input").value);
+  const to   = await resolveCombo(state.toNodeId,   $("#to-input").value);
+  if (!from) { alert(`From: couldn't find a node matching "${$("#from-input").value.trim()}"`); return; }
+  if (!to)   { alert(`To: couldn't find a node matching "${$("#to-input").value.trim()}"`); return; }
+  if (from.id === to.id) {
+    alert("From and To resolved to the same node — pick distinct nodes.");
     return;
   }
-  const from = state.nodes.find((n) => n.id === state.fromNodeId);
-  const to = state.nodes.find((n) => n.id === state.toNodeId);
-  if (!from || !to) { alert("Selection no longer valid — reload the graph."); return; }
   try {
     const hits = await invoke("find_paths", {
       graphId: state.currentGraph.id,

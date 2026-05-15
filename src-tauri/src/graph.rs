@@ -2,7 +2,7 @@ use crate::db::{list_edges, list_nodes, node_by_app_id, Edge, Node};
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -21,14 +21,55 @@ fn escape_label(s: &str) -> String {
     out
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
+// Wrap content for DOT node labels: width is in characters (CJK counts as 1).
+// Prefers breaking at the most recent whitespace within the line; falls back
+// to a hard break when no space exists (Chinese / long tokens). Escapes quotes
+// and backslashes as it goes, and emits `\n` as DOT centered line breaks.
+fn wrap_label(s: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut current: Vec<char> = Vec::new();
+
+    fn flush_line(out: &mut String, line: &mut Vec<char>) {
+        for ch in line.iter() {
+            match *ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                _ => out.push(*ch),
+            }
+        }
+        line.clear();
     }
+
+    for ch in s.chars() {
+        if ch == '\r' { continue; }
+        if ch == '\n' {
+            flush_line(&mut out, &mut current);
+            out.push_str("\\n");
+            continue;
+        }
+        current.push(ch);
+        if current.len() >= width {
+            // try to break at the last space
+            let break_idx = current.iter().rposition(|&c| c == ' ');
+            match break_idx {
+                Some(idx) if idx >= width / 2 => {
+                    let head: Vec<char> = current[..idx].to_vec();
+                    let tail: Vec<char> = current[idx + 1..].to_vec();
+                    let mut head_mut = head;
+                    flush_line(&mut out, &mut head_mut);
+                    out.push_str("\\n");
+                    current = tail;
+                }
+                _ => {
+                    // hard break (Chinese or very long token)
+                    flush_line(&mut out, &mut current);
+                    out.push_str("\\n");
+                }
+            }
+        }
+    }
+    flush_line(&mut out, &mut current);
+    out
 }
 
 pub fn render_dot(graph_name: &str, nodes: &[Node], edges: &[Edge]) -> String {
@@ -36,12 +77,18 @@ pub fn render_dot(graph_name: &str, nodes: &[Node], edges: &[Edge]) -> String {
     out.push_str(&format!("digraph \"{}\" {{\n", escape_label(graph_name)));
     out.push_str("  rankdir=LR;\n");
     out.push_str("  graph [splines=true, overlap=false, bgcolor=\"#fafafa\"];\n");
-    out.push_str("  node  [shape=box, style=\"rounded,filled\", fillcolor=\"#ffffff\", color=\"#888888\", fontname=\"Helvetica\"];\n");
+    out.push_str("  node  [shape=box, style=\"rounded,filled\", fillcolor=\"#ffffff\", color=\"#888888\", fontname=\"Helvetica\", fontsize=11];\n");
     out.push_str("  edge  [color=\"#888888\", fontname=\"Helvetica\", fontsize=10];\n\n");
 
+    // ---- 1. graph name root node ----
+    out.push_str(&format!(
+        "  graph_root [label=\"{}\", shape=ellipse, fillcolor=\"#e8eef9\", color=\"#3a73e8\", fontsize=13];\n",
+        wrap_label(graph_name, 24)
+    ));
+
+    // ---- 2. content nodes (no app_id in label, wrapped at 24 chars) ----
     for n in nodes {
-        let preview = truncate(&n.content.replace('\n', " "), 80);
-        let label = format!("{}\\n{}", escape_label(&n.app_id), escape_label(&preview));
+        let label = wrap_label(&n.content, 24);
         out.push_str(&format!(
             "  n{} [label=\"{}\", tooltip=\"{}\"];\n",
             n.id,
@@ -51,6 +98,22 @@ pub fn render_dot(graph_name: &str, nodes: &[Node], edges: &[Edge]) -> String {
     }
     out.push('\n');
 
+    // ---- 3. connect graph_root → top-level (no-reply-parent) nodes ----
+    let has_reply_parent: HashSet<i64> = edges
+        .iter()
+        .filter(|e| e.kind == "reply")
+        .map(|e| e.to_node_id)
+        .collect();
+    for n in nodes {
+        if !has_reply_parent.contains(&n.id) {
+            out.push_str(&format!(
+                "  graph_root -> n{} [arrowhead=vee, color=\"#3a73e8\", penwidth=1.4];\n",
+                n.id
+            ));
+        }
+    }
+
+    // ---- 4. user-authored edges ----
     for e in edges {
         let style = if e.kind == "ref" {
             ", style=dashed, color=\"#cc5555\", constraint=false"

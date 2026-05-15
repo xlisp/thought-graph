@@ -47,8 +47,8 @@ h4 { font-size: 12px; text-transform: uppercase; color: #6b7080; letter-spacing:
 .muted.small { font-size: 11px; padding: 0 12px 8px; margin: 0; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
-#app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; transition: grid-template-columns 0.18s; }
-#app.no-sidebar { grid-template-columns: 0 1fr; }
+#app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; min-height: 0; transition: grid-template-columns 0.18s; }
+#app.no-sidebar { grid-template-columns: 1fr; }
 #app.no-sidebar .sidebar { display: none; }
 
 .toggle-btn {
@@ -108,7 +108,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .graph-list .gname { font-weight: 600; }
 .graph-list .gdate { font-size: 11px; opacity: 0.7; }
 
-.main { display: flex; flex-direction: column; min-width: 0; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; height: 100%; }
 .topbar {
   display: flex;
   align-items: center;
@@ -117,6 +117,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   background: #fff;
   border-bottom: 1px solid #e3e5ec;
   gap: 12px;
+  flex-shrink: 0;          /* never let the topbar scroll away */
 }
 .title-area { min-width: 0; }
 .title-area h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -132,7 +133,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   transition: grid-template-columns 0.18s;
 }
 .panes.no-search {
-  grid-template-columns: 1fr 0;
+  grid-template-columns: 1fr;
 }
 .panes.no-search .search-pane { display: none; }
 
@@ -150,6 +151,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   padding: 10px 12px;
   border-bottom: 1px solid #e3e5ec;
   gap: 6px;
+  flex-shrink: 0;          /* fixed inside each pane */
+  background: #fff;
 }
 .pane-head h3 { white-space: nowrap; }
 
@@ -159,6 +162,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;          /* fixed inside the nodes pane */
+  background: #fff;
 }
 .filter-row input { flex: 1; }
 
@@ -167,7 +172,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
   margin: 0;
   padding: 6px 8px;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
 }
 .tree > li { margin: 0; }
 .tree ul {
